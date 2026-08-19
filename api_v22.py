@@ -468,7 +468,7 @@ def fill_excel(xlsx, fixtures, stats_rows, odds_rows):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Bot Apuestas V2.3")
+    ap = argparse.ArgumentParser(description="Bot Apuestas V2.3.1 - consulta global diaria")
     ap.add_argument(
         "--date",
         default=datetime.now().strftime("%Y-%m-%d")
@@ -507,73 +507,59 @@ def main():
     session = requests.Session()
     limiter = RateLimiter()
 
-    selected_leagues = []
-
-    print(f"Consultando ligas para {args.date} / temporada {args.season}...")
-
-    for country in ALLOWED_COUNTRIES:
-        try:
-            leagues = get_leagues(
-                session, limiter, key, country, args.season
-            )
-
-            for item in leagues:
-                lg = item.get("league", {})
-                if lg.get("type") != "League":
-                    continue
-
-                name = lg.get("name", "")
-
-                if not league_is_preferred(country, name):
-                    continue
-
-                preferred = name in PREFERRED_LEAGUES.get(country, [])
-
-                selected_leagues.append({
-                    "id": lg.get("id"),
-                    "name": name,
-                    "country": country,
-                    "priority": 0 if preferred else 1
-                })
-
-                print(f"OK liga: {country} | {name} | id={lg.get('id')}")
-
-        except Exception as e:
-            print(f"ERROR ligas {country}: {e}")
-
-    # Evitar duplicados por id.
-    unique = {}
-    for lg in selected_leagues:
-        unique[lg["id"]] = lg
-    selected_leagues = list(unique.values())
-
-    selected_leagues.sort(
-        key=lambda x: (x["priority"], x["country"], x["name"])
-    )
-
-    print(f"Ligas objetivo encontradas: {len(selected_leagues)}")
+    # V2.3.1:
+    # Consultamos TODOS los partidos del día en una sola llamada y después
+    # filtramos por país/liga. Esto evita que un cambio de temporada o nombre
+    # de liga deje el motor con 0 partidos aunque la API sí tenga encuentros.
+    print(f"Consultando partidos del día {args.date} / zona America-Lima...")
 
     fixtures = []
 
-    for lg in selected_leagues:
-        try:
-            fs = get_fixtures(
-                session, limiter, key,
-                lg["id"], args.season, args.date
-            )
+    try:
+        all_fixtures = api_get(
+            session,
+            limiter,
+            "/fixtures",
+            {
+                "date": args.date,
+                "timezone": "America/Lima"
+            },
+            key
+        )
 
-            for f in fs:
-                f["_priority"] = lg["priority"]
-                f["_country"] = lg["country"]
-                fixtures.append(f)
+        print(f"Partidos devueltos por API para la fecha: {len(all_fixtures)}")
 
-        except Exception as e:
+        allowed = {normalize_name(c): c for c in ALLOWED_COUNTRIES}
+
+        for f in all_fixtures:
+            league = f.get("league", {})
+            country_name = league.get("country", "")
+            league_name = league.get("name", "")
+
+            canonical_country = allowed.get(normalize_name(country_name))
+            if not canonical_country:
+                continue
+
+            # Sólo ligas preferidas del motor.
+            if not league_is_preferred(canonical_country, league_name):
+                continue
+
+            f["_country"] = canonical_country
+            f["_priority"] = 0 if canonical_country in GOAL_FOCUS_COUNTRIES else 1
+            fixtures.append(f)
+
             print(
-                f"ERROR fixtures {lg['country']} "
-                f"{lg['name']}: {e}"
+                f"OK partido: {canonical_country} | "
+                f"{league_name} | "
+                f"{f.get('teams', {}).get('home', {}).get('name', '')} vs "
+                f"{f.get('teams', {}).get('away', {}).get('name', '')}"
             )
 
-    # Ordenar primero países prioritarios, luego ligas preferidas.
+    except Exception as e:
+        print(f"ERROR consulta global fixtures: {e}")
+        fixtures = []
+
+    # Ordenar primero países prioritarios y después por liga/fixture.
     fixtures.sort(
         key=lambda f: (
             0 if f.get("_country") in GOAL_FOCUS_COUNTRIES else 1,
@@ -591,7 +577,7 @@ def main():
             unique_fixtures[fid] = f
     fixtures = list(unique_fixtures.values())
 
-    print(f"Partidos encontrados: {len(fixtures)}")
+    print(f"Partidos objetivo después de filtros: {len(fixtures)}")
 
     # Detalle limitado para no disparar el límite de la API.
     details = fixtures[:args.max_fixtures] if args.details else []
@@ -626,7 +612,7 @@ def main():
     fill_excel(args.xlsx, fixtures, stats_rows, odds_rows)
 
     print(f"Excel actualizado: {args.xlsx}")
-    print("V2.3 OK")
+    print("V2.3.1 OK")
 
 
 if __name__ == "__main__":
