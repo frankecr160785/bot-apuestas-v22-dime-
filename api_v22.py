@@ -339,7 +339,9 @@ def fill_excel(xlsx, fixtures, stats_rows, odds_rows):
         teams = f.get("teams", {})
         league = f.get("league", {})
 
-        date_s = str(fx.get("date", "") or "")[:10]\n        if not date_s:\n            date_s = args_date
+        date_s = str(fx.get("date", "") or "")[:10]
+        if not date_s:
+            date_s = args_date
         home = teams.get("home", {}).get("name", "")
         away = teams.get("away", {}).get("name", "")
         league_name = league.get("name", "")
@@ -490,7 +492,8 @@ def main():
         default=30
     )
 
-    args = ap.parse_args()\n    args_date = args.date
+    args = ap.parse_args()
+    args_date = args.date
 
     key = os.getenv("API_FOOTBALL_KEY")
     if not key:
