@@ -1,4 +1,4 @@
-name: Bot Apuestas V2.2
+name: Bot Apuestas V2.3
 
 on:
   workflow_dispatch:
@@ -29,23 +29,28 @@ jobs:
         run: |
           echo "Archivos del repositorio:"
           ls -la
+
           echo "Comprobando archivos principales:"
           test -f api_v22.py
           test -f Excel_V2_2_Motor_Automatico.xlsx
 
-      - name: Ejecutar API-Football
+      - name: Ejecutar API-Fútbol
         env:
           API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
         run: |
           python api_v22.py \
             --date "$(date -u +%Y-%m-%d)" \
+            --season "$(date -u +%Y)" \
             --xlsx "Excel_V2_2_Motor_Automatico.xlsx" \
             --details
 
       - name: Guardar cambios
         run: |
-          git config user.name "Bot V2.2"
+          git config user.name "Bot Apuestas"
           git config user.email "bot-v22@users.noreply.github.com"
+
           git add Excel_V2_2_Motor_Automatico.xlsx
-          git diff --cached --quiet || git commit -m "Actualizar Excel V2.2"
+
+          git diff --cached --quiet || git commit -m "Actualizar datos de fútbol"
+
           git push
