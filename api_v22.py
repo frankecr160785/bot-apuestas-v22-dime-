@@ -1,4 +1,4 @@
-import os
+uimport os
 import sys
 import time
 import argparse
@@ -609,6 +609,54 @@ def main():
             key
         )
 
+        print(
+            f"Partidos devueltos por API para la fecha: "
+            f"{len(all_fixtures)}"
+        )
+
+        allowed = {
+            normalize_name(c): c
+            for c in ALLOWED_COUNTRIES
+        }
+
+        for f in all_fixtures:
+            league = f.get("league", {})
+            country_name = league.get("country", "")
+            league_name = league.get("name", "")
+
+            canonical_country = allowed.get(
+                normalize_name(country_name)
+            )
+
+            if not canonical_country:
+                continue
+
+            if not league_is_preferred(
+                canonical_country,
+                league_name
+            ):
+                continue
+
+            f["_country"] = canonical_country
+
+            f["_priority"] = (
+                0
+                if canonical_country in GOAL_FOCUS_COUNTRIES
+                else 1
+            )
+
+            fixtures.append(f)
+
+            print(
+                f"OK partido: {canonical_country} | "
+                f"{league_name} | "
+                f"{f.get('teams', {}).get('home', {}).get('name', '')} vs "
+                f"{f.get('teams', {}).get('away', {}).get('name', '')}"
+            )
+
+    except Exception as e:
+        print(f"ERROR consulta global fixtures: {e}")
+        fixtures = []
         print(f"Partidos devueltos por API para la fecha: {len(all_fixtures)}")
 
         allowed = {normalize_name(c): c for c in ALLOWED_COUNTRIES}
