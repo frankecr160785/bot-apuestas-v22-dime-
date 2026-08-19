@@ -133,6 +133,33 @@ def get_odds(session, limiter, key, fixture_id):
     )
 
 
+def get_odds_page(session, limiter, key, date_s, page=1):
+    return api_get(
+        session, limiter, "/odds",
+        {"date": date_s, "page": page},
+        key
+    )
+
+
+def get_fixture_details_bulk(session, limiter, key, fixture_ids):
+    """Recupera detalles de hasta 20 fixtures por llamada."""
+    details = []
+    ids = [str(x) for x in fixture_ids if x]
+    for start in range(0, len(ids), 20):
+        chunk = ids[start:start + 20]
+        if not chunk:
+            continue
+        response = api_get(
+            session,
+            limiter,
+            "/fixtures",
+            {"ids": "-".join(chunk)},
+            key
+        )
+        details.extend(response)
+    return details
+
+
 def normalize_name(value):
     if value is None:
         return ""
@@ -327,68 +354,123 @@ def fill_excel(xlsx, fixtures, stats_rows, odds_rows):
     else:
         ws_base = wb["BASE_DATOS"]
 
-    existing = existing_keys(
-        ws_base,
-        ["Fecha", "Local", "Visitante"]
+    # El Excel V2.2 usa FECHA/LIGA/EQUIPO/CONDICIÓN/RIVAL.
+    # Reparamos las filas vacías creadas por V2.3.1 y luego evitamos duplicados.
+    headers = [ws_base.cell(1, c).value for c in range(1, ws_base.max_column + 1)]
+    hmap = {str(h).strip().lower(): i for i, h in enumerate(headers) if h}
+
+    def set_cell(row_idx, names, value):
+        for name in names:
+            if name in hmap:
+                ws_base.cell(row_idx, hmap[name] + 1).value = value
+                return True
+        return False
+
+    def row_value(row_idx, names):
+        for name in names:
+            if name in hmap:
+                return ws_base.cell(row_idx, hmap[name] + 1).value
+        return None
+
+    # Identificar filas completamente vacías de equipo/rival que dejó la ejecución anterior.
+    blank_rows = []
+    for r in range(2, ws_base.max_row + 1):
+        team = row_value(r, ["equipo", "team", "local", "home"])
+        rival = row_value(r, ["rival", "visitante", "away"])
+        if team in (None, "") and rival in (None, ""):
+            row_date = row_value(r, ["fecha", "date"])
+            if str(row_date or "")[:10] == str(args_date)[:10]:
+                blank_rows.append(r)
+
+    # Orden estable para que la reparación sea reproducible.
+    fixtures_for_base = sorted(
+        fixtures,
+        key=lambda f: (
+            f.get("_country", ""),
+            f.get("league", {}).get("name", ""),
+            f.get("fixture", {}).get("id", 0)
+        )
     )
 
-    added_base = 0
-
-    for f in fixtures:
+    repaired = 0
+    used_blank = set()
+    for f in fixtures_for_base:
+        if not blank_rows:
+            break
         fx = f.get("fixture", {})
         teams = f.get("teams", {})
         league = f.get("league", {})
+        date_s = str(fx.get("date", "") or "")[:10] or args_date
+        home = teams.get("home", {}).get("name", "")
+        away = teams.get("away", {}).get("name", "")
+        league_name = league.get("name", "")
+        fid = fx.get("id")
+        r = blank_rows.pop(0)
+        used_blank.add(r)
 
-        date_s = str(fx.get("date", "") or "")[:10]
-        if not date_s:
-            date_s = args_date
+        set_cell(r, ["fecha", "date"], date_s)
+        set_cell(r, ["liga", "league"], league_name)
+        set_cell(r, ["equipo", "team", "local", "home"], home)
+        set_cell(r, ["condición", "condicion", "side"], "LOCAL")
+        set_cell(r, ["rival", "visitante", "away"], away)
+        if "observaciones" in hmap:
+            ws_base.cell(r, hmap["observaciones"] + 1).value = (
+                f"API-Football | fixture={fid} | país={f.get('_country','')}"
+            )
+        repaired += 1
+
+    # Clave real del esquema V2.2.
+    existing = existing_keys(ws_base, ["FECHA", "EQUIPO", "RIVAL", "CONDICIÓN"])
+    added_base = repaired
+
+    for f in fixtures_for_base:
+        fx = f.get("fixture", {})
+        teams = f.get("teams", {})
+        league = f.get("league", {})
+        date_s = str(fx.get("date", "") or "")[:10] or args_date
         home = teams.get("home", {}).get("name", "")
         away = teams.get("away", {}).get("name", "")
         league_name = league.get("name", "")
         country = f.get("_country", "")
         fid = fx.get("id")
 
-        key = (str(date_s), str(home), str(away))
+        rows_to_add = [
+            (home, "LOCAL", away),
+            (away, "VISITANTE", home),
+        ]
 
-        if key in existing:
-            continue
+        for team_name, condition, rival_name in rows_to_add:
+            key = (str(date_s), str(team_name), str(rival_name), str(condition))
+            if key in existing:
+                continue
 
-        # Añadir respetando las columnas que existan en el Excel.
-        headers = [ws_base.cell(1, c).value for c in range(1, ws_base.max_column + 1)]
-        row = [None] * len(headers)
-        hmap = {str(h).strip().lower(): i for i, h in enumerate(headers) if h}
+            row = [None] * len(headers)
+            values = {
+                "fecha": date_s,
+                "date": date_s,
+                "liga": league_name,
+                "league": league_name,
+                "equipo": team_name,
+                "team": team_name,
+                "local": home,
+                "home": home,
+                "condición": condition,
+                "condicion": condition,
+                "side": condition,
+                "rival": rival_name,
+                "visitante": away,
+                "away": away,
+                "observaciones": f"API-Football | fixture={fid} | país={country}",
+            }
+            for name, value in values.items():
+                if name in hmap:
+                    row[hmap[name]] = value
 
-        values = {
-            "fecha": date_s,
-            "date": date_s,
-            "liga": league_name,
-            "league": league_name,
-            "local": home,
-            "home": home,
-            "visitante": away,
-            "away": away,
-            "fixture_id": f"fixture_id={fid}; country={country}",
-            "país": country,
-            "pais": country,
-            "country": country,
-        }
+            ws_base.append(row)
+            existing.add(key)
+            added_base += 1
 
-        for name, value in values.items():
-            if name in hmap:
-                row[hmap[name]] = value
-
-        # Si no hay columnas reconocibles, conserva el esquema antiguo al final.
-        if all(v is None for v in row):
-            row = [
-                date_s, league_name, home, "LOCAL", away,
-                f"fixture_id={fid}; country={country}"
-            ]
-            if len(headers) >= 7:
-                row.append(country)
-
-        ws_base.append(row)
-        existing.add(key)
-        added_base += 1
+    print(f"BASE_DATOS reparados/nuevos: {added_base}")
 
     # Estadísticas completas.
     stats_headers = [
@@ -468,7 +550,7 @@ def fill_excel(xlsx, fixtures, stats_rows, odds_rows):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Bot Apuestas V2.3.1 - consulta global diaria")
+    ap = argparse.ArgumentParser(description="Bot Apuestas V2.3.2 - optimizado para Excel V2.2")
     ap.add_argument(
         "--date",
         default=datetime.now().strftime("%Y-%m-%d")
@@ -537,83 +619,4 @@ def main():
             league_name = league.get("name", "")
 
             canonical_country = allowed.get(normalize_name(country_name))
-            if not canonical_country:
-                continue
-
-            # Sólo ligas preferidas del motor.
-            if not league_is_preferred(canonical_country, league_name):
-                continue
-
-            f["_country"] = canonical_country
-            f["_priority"] = 0 if canonical_country in GOAL_FOCUS_COUNTRIES else 1
-            fixtures.append(f)
-
-            print(
-                f"OK partido: {canonical_country} | "
-                f"{league_name} | "
-                f"{f.get('teams', {}).get('home', {}).get('name', '')} vs "
-                f"{f.get('teams', {}).get('away', {}).get('name', '')}"
-            )
-
-    except Exception as e:
-        print(f"ERROR consulta global fixtures: {e}")
-        fixtures = []
-
-    # Ordenar primero países prioritarios y después por liga/fixture.
-    fixtures.sort(
-        key=lambda f: (
-            0 if f.get("_country") in GOAL_FOCUS_COUNTRIES else 1,
-            f.get("_priority", 1),
-            f.get("league", {}).get("name", ""),
-            f.get("fixture", {}).get("id", 0)
-        )
-    )
-
-    # Dedupe por fixture_id.
-    unique_fixtures = {}
-    for f in fixtures:
-        fid = f.get("fixture", {}).get("id")
-        if fid:
-            unique_fixtures[fid] = f
-    fixtures = list(unique_fixtures.values())
-
-    print(f"Partidos objetivo después de filtros: {len(fixtures)}")
-
-    # Detalle limitado para no disparar el límite de la API.
-    details = fixtures[:args.max_fixtures] if args.details else []
-
-    stats_rows = []
-    odds_rows = []
-
-    for i, f in enumerate(details, 1):
-        fid = f.get("fixture", {}).get("id")
-        country = f.get("_country", "")
-        league_name = f.get("league", {}).get("name", "")
-        home = f.get("teams", {}).get("home", {}).get("name", "")
-        away = f.get("teams", {}).get("away", {}).get("name", "")
-
-        print(
-            f"Detalle {i}/{len(details)} | "
-            f"{country} | {league_name} | {home} vs {away} | {fid}"
-        )
-
-        try:
-            stats = get_stats(session, limiter, key, fid)
-            stats_rows.extend(prepare_stats_rows(f, stats))
-        except Exception as e:
-            print(f"stats {fid}: {e}")
-
-        try:
-            odds = get_odds(session, limiter, key, fid)
-            odds_rows.extend(flatten_odds(f, odds))
-        except Exception as e:
-            print(f"odds {fid}: {e}")
-
-    fill_excel(args.xlsx, fixtures, stats_rows, odds_rows)
-
-    print(f"Excel actualizado: {args.xlsx}")
-    print("V2.3.1 OK")
-
-
-if __name__ == "__main__":
-    main()
+            if not canonical_country
