@@ -619,4 +619,5 @@ def main():
             league_name = league.get("name", "")
 
             canonical_country = allowed.get(normalize_name(country_name))
-            if not canonical_country
+            if not canonical_country:
+                continue 
