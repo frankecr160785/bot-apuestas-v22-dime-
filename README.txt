@@ -1,58 +1,50 @@
-# Conector API-Football → Excel V2.2
+name: Bot Apuestas V2.2
 
-## Qué hace
-1. Consulta API-Football.
-2. Descarga los partidos de una fecha.
-3. Puede consultar estadísticas y cuotas por fixture.
-4. Escribe los partidos en `BASE_DATOS` y `EVALUADOR` del Excel V2.2.
-5. NO inventa probabilidades: la probabilidad V2.2 se mantiene como dato del modelo.
+on:
+  workflow_dispatch:
 
-## Seguridad
-La API key NO está dentro del código. Debe guardarse como variable de entorno.
+permissions:
+  contents: write
 
-### Windows PowerShell
-```powershell
-$env:API_FOOTBALL_KEY="TU_CLAVE"
-python api_v22.py --date 2026-08-20 --xlsx Excel_V2_2_Bot_Apuestas.xlsx --details
-```
+jobs:
+  ejecutar-bot:
+    runs-on: ubuntu-latest
+    environment: BOT
 
-### Windows CMD
-```cmd
-set API_FOOTBALL_KEY=TU_CLAVE
-python api_v22.py --date 2026-08-20 --xlsx Excel_V2_2_Bot_Apuestas.xlsx --details
-```
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
 
-### macOS/Linux
-```bash
-export API_FOOTBALL_KEY="TU_CLAVE"
-python3 api_v22.py --date 2026-08-20 --xlsx Excel_V2_2_Bot_Apuestas.xlsx --details
-```
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-## Instalación
-```bash
-pip install -r requirements.txt
-```
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requisitos.txt
 
-## Primera prueba
-Sin detalles, para gastar menos cuota:
-```bash
-python api_v22.py --date 2026-08-20 --xlsx Excel_V2_2_Bot_Apuestas.xlsx
-```
+      - name: Comprobar archivos
+        run: |
+          echo "Archivos del repositorio:"
+          ls -la
+          echo "Python:"
+          python --version
 
-Con estadísticas/cuotas:
-```bash
-python api_v22.py --date 2026-08-20 --xlsx Excel_V2_2_Bot_Apuestas.xlsx --details
-```
+      - name: Ejecutar API-Football
+        env:
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+        run: |
+          python api_v22.py \
+            --date "$(date -u +%Y-%m-%d)" \
+            --xlsx "Excel_V2_2_Motor_Automatico.xlsx" \
+            --details
 
-## Próxima versión
-La siguiente etapa debe:
-- seleccionar automáticamente mercados disponibles;
-- calcular medias de últimos 5/10 partidos;
-- alimentar los criterios 0–1 de V2.2;
-- calcular la probabilidad propia del modelo;
-- comparar contra la cuota;
-- generar ALERTA FUERTE/MEDIA;
-- guardar histórico;
-- y finalmente enviar la alerta a Telegram.
-
-No se recomienda apostar automáticamente. Primero se debe validar el modelo con un histórico suficiente.
+      - name: Guardar cambios
+        run: |
+          git config user.name "Bot V2.2"
+          git config user.email "bot-v22@users.noreply.github.com"
+          git add Excel_V2_2_Motor_Automatico.xlsx
+          git diff --cached --quiet || git commit -m "Actualizar datos V2.2"
+          git push
