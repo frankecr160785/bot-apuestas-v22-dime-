@@ -23,7 +23,7 @@ jobs:
       - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
-          pip install -r requisitos.txt
+          python -m pip install requests openpyxl
 
       - name: Comprobar archivos
         run: |
